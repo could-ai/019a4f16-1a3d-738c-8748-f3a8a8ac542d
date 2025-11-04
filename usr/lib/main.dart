@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math';
 import 'package:flutter/material.dart';
 
 void main() {
@@ -34,6 +35,8 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
   static const double groundHeight = 50;
   static const double obstacleWidth = 40;
   static const double obstacleHeight = 40;
+  static const double coinWidth = 25;
+  static const double coinHeight = 25;
   static const double gravity = 0.6;
   static const double jumpStrength = -15.0;
 
@@ -44,11 +47,13 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
   bool _isSliding = false;
 
   final List<Rect> _obstacles = [];
+  final List<Rect> _coins = [];
   double _gameSpeed = 5.0;
   int _score = 0;
-  bool _gameOver = false;
+  int _coinsCollected = 0;
 
   Timer? _speedIncreaseTimer;
+  final Stopwatch _stopwatch = Stopwatch();
 
   @override
   void initState() {
@@ -68,20 +73,21 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
       _isJumping = false;
       _isSliding = false;
       _obstacles.clear();
+      _coins.clear();
       _gameSpeed = 5.0;
       _score = 0;
-      _gameOver = false;
+      _coinsCollected = 0;
       _addObstacle();
+      _addCoin();
     });
     _controller.repeat();
     _speedIncreaseTimer?.cancel();
     _speedIncreaseTimer = Timer.periodic(const Duration(seconds: 5), (timer) {
-      if (!_gameOver) {
-        setState(() {
-          _gameSpeed += 0.5;
-        });
-      }
+      setState(() {
+        _gameSpeed += 0.5;
+      });
     });
+    _stopwatch..reset()..start();
   }
 
   void _addObstacle() {
@@ -95,14 +101,22 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
       ),
     );
   }
+  
+  void _addCoin() {
+    final screenWidth = MediaQuery.of(context).size.width;
+    // Add some randomness to coin spawning
+    final nextCoinX = _coins.isEmpty ? screenWidth : _coins.last.right + Random().nextInt(200) + 150;
+    _coins.add(
+      Rect.fromLTWH(
+        nextCoinX,
+        0, // Will be adjusted
+        coinWidth,
+        coinHeight,
+      ),
+    );
+  }
 
   void _gameLoop() {
-    if (_gameOver) {
-      _controller.stop();
-      _speedIncreaseTimer?.cancel();
-      return;
-    }
-
     // Character physics
     if (_isJumping) {
       _characterVelocityY += gravity;
@@ -127,9 +141,24 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
         _score++;
       }
     }
+    
+    // Coin movement and management
+    for (int i = _coins.length - 1; i >= 0; i--) {
+      final coin = _coins[i];
+      final newLeft = coin.left - _gameSpeed;
+      _coins[i] = coin.translate(newLeft - coin.left, 0);
+
+      if (newLeft < -coinWidth) {
+        _coins.removeAt(i);
+      }
+    }
 
     if (_obstacles.isEmpty || (screenWidth - _obstacles.last.left) > 300) {
       _addObstacle();
+    }
+    
+    if (_coins.isEmpty || (screenWidth - _coins.last.left) > 400) {
+      _addCoin();
     }
     
     // Collision detection
@@ -140,19 +169,23 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
       _isSliding ? characterHeight / 2 : characterHeight,
     );
 
-    for (final obstacle in _obstacles) {
-       final obstacleOnGroundRect = Rect.fromLTWH(
-         obstacle.left,
-         MediaQuery.of(context).size.height - groundHeight - obstacle.height,
-         obstacle.width,
-         obstacle.height
-       );
-      if (characterRect.overlaps(obstacleOnGroundRect)) {
+    // Coin collection
+    for (int i = _coins.length - 1; i >= 0; i--) {
+      final coin = _coins[i];
+      final coinOnGroundRect = Rect.fromLTWH(
+        coin.left,
+        MediaQuery.of(context).size.height - groundHeight - coin.height,
+        coin.width,
+        coin.height
+      );
+      if (characterRect.overlaps(coinOnGroundRect)) {
         setState(() {
-          _gameOver = true;
+          _coinsCollected++;
+          _coins.removeAt(i);
         });
       }
     }
+
 
     setState(() {});
   }
@@ -185,14 +218,12 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
   void dispose() {
     _controller.dispose();
     _speedIncreaseTimer?.cancel();
+    _stopwatch.stop();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final screenHeight = MediaQuery.of(context).size.height;
-    final screenWidth = MediaQuery.of(context).size.width;
-
     return Scaffold(
       body: GestureDetector(
         onTap: _jump,
@@ -244,50 +275,47 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
                 ),
               );
             }).toList(),
+            
+            // Coins
+            ..._coins.map((coin) {
+              return Positioned(
+                bottom: groundHeight,
+                left: coin.left,
+                child: Container(
+                  width: coin.width,
+                  height: coin.height,
+                  decoration: const BoxDecoration(
+                    color: Colors.amber,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+              );
+            }).toList(),
 
-            // Score
+            // Score, Timer, and Coins UI
             Positioned(
               top: 50,
               left: 20,
-              child: Text(
-                'Score: $_score',
-                style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Score: $_score',
+                    style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.black87),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Time: ${_stopwatch.elapsed.inSeconds}s',
+                    style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.black87),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Coins: $_coinsCollected',
+                    style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.black87),
+                  ),
+                ],
               ),
             ),
-
-            // Game Over Screen
-            if (_gameOver)
-              Container(
-                color: Colors.black.withOpacity(0.5),
-                child: Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const Text(
-                        'Game Over',
-                        style: TextStyle(
-                          fontSize: 48,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
-                        ),
-                      ),
-                      const SizedBox(height: 20),
-                      Text(
-                        'Your Score: $_score',
-                        style: const TextStyle(
-                          fontSize: 24,
-                          color: Colors.white,
-                        ),
-                      ),
-                      const SizedBox(height: 40),
-                      ElevatedButton(
-                        onPressed: startGame,
-                        child: const Text('Restart Game'),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
           ],
         ),
       ),
